@@ -135,11 +135,6 @@ python -m unittest discover tests -v
 
 ## Author
 
-**Rohit Kumawat**  
-Computer Science and Engineering  
-BMS College of Engineering, Bengaluru
-
-GitHub: [rohitkumawat-devs](https://github.com/rohitkumawat-devs)
 
 ## Disclaimer
 
