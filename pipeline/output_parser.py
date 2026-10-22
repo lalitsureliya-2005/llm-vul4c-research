@@ -157,7 +157,9 @@ def parse_detection_output(text: Optional[str]) -> Tuple[Optional[Dict[str, Any]
         return None, STATUS_TRUNCATED, "JSON object was never closed (generation incomplete)"
 
     try:
-        obj = json.loads(obj_text)
+        # strict=False tolerates raw newlines/tabs inside strings, which models
+        # often emit when quoting source code as evidence.
+        obj = json.loads(obj_text, strict=False)
     except json.JSONDecodeError as err:
         if _BARE_TYPE_VALUE.search(obj_text):
             return None, STATUS_SCHEMA_ECHO, "Object uses type names (e.g. boolean, string) as values"
