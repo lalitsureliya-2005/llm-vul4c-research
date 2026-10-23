@@ -83,7 +83,7 @@ class FakeDocker:
             self.fixed = self.broken = False  # restore pristine checkout
             return CommandResult(0, "", 0.01)
         if "sha256sum" in cmd:
-            m = _re.search(r"cp (\S+) \"\$f\"", cmd)
+            m = _re.search(r"cp (\S+) \"\$f\"", cmd)  # first variant; all variants share the change
             data = self.uploads.get(m.group(1).strip("'"), b"")
             self.fixed = self.fixed or b"if (n > 8)" in data
             self.broken = self.broken or b"BROKEN" in data
@@ -295,6 +295,65 @@ class TestSideEffectsReviewAndSignificance(unittest.TestCase):
         self.assertIsNone(normalize_label(""))
         with self.assertRaises(ValueError):
             normalize_label("maybe")
+
+
+class TestRoundTripRegressions(unittest.TestCase):
+    """Unchanged answers must splice back byte-for-byte (CRLF, trailing blanks/spaces, no final newline)."""
+
+    def test_identity_and_oracle_round_trip(self):
+        from pipeline.task_prompts import identity_repair_answer, oracle_repair_answer
+        samples = [
+            "int f(void)\r\n{\r\n    return 1;   \r\n}\r\n\r\n\r\nint g;\r\n",
+            "int f(void)\n{\n    return 1;\n}\n\n\n",
+            "int f(void)\n{\n    return 1;\n}",
+            "".join(f"int v{i};\n" for i in range(40)) + "int f(void)\n{\n\treturn 1;\t\n}\n\n",
+        ]
+        for old in samples:
+            new = old.replace("return 1;", "return 2;")
+            regs = extract_regions(old, new, "x.c")
+            for fn, expected in ((identity_repair_answer, old), (oracle_repair_answer, new)):
+                answers, warnings = parse_region_answers(fn(regs), len(regs))
+                self.assertEqual(splice_regions(old, regs, answers), expected, (fn.__name__, repr(old)))
+                self.assertEqual(warnings, [])
+
+    def test_crlf_case_identity_unchanged_through_build_candidate(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            case = tmp / "bench" / "demo" / "CVE-2099-0003"
+            case.mkdir(parents=True)
+            old = OLD.replace("\n", "\r\n").encode()
+            (case / "CVE-2099-0003_CWE-787_foo.c_OLD.c").write_bytes(old)
+            (case / "CVE-2099-0003_CWE-787_foo.c_NEW.c").write_bytes(NEW.replace("\n", "\r\n").encode())
+            cfg = rx._merge(rx.DEFAULTS, {"benchmark_root": str(tmp / "bench"), "cases": ["demo/CVE-2099-0003"]})
+            cases, _ = rx.prepare_cases(cfg)
+            from pipeline.task_prompts import identity_repair_answer, oracle_repair_answer
+            a, _ = parse_region_answers(identity_repair_answer(cases[0].regions), 1)
+            self.assertFalse(rx.build_candidate(cases[0], a)["changed"])
+            a, _ = parse_region_answers(oracle_repair_answer(cases[0].regions), 1)
+            self.assertTrue(rx.build_candidate(cases[0], a)["identical_to_reference"])
+            # A model answer with LF endings is converted to the file's CRLF convention
+            lf_answer = "```c\n" + cases[0].regions[0].new_code.replace("\r\n", "\n") + "```"
+            a, _ = parse_region_answers(lf_answer, 1)
+            cand = rx.build_candidate(cases[0], a)
+            self.assertEqual(cand["payload"][0].content, NEW.replace("\n", "\r\n").encode())
+            # Sandbox variants cover an LF checkout of the same file
+            import hashlib
+            lf_sha = hashlib.sha256(OLD.encode()).hexdigest()
+            self.assertIn(lf_sha, [h for h, _ in cand["payload"][0].variants])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_crlf_answer_on_lf_file_is_normalised(self):
+        regs = extract_regions(OLD, NEW, "foo.c")
+        crlf_answer = "```c\n" + regs[0].new_code.replace("\n", "\r\n") + "```"
+        answers, _ = parse_region_answers(crlf_answer, 1)
+        self.assertEqual(rx._match_newlines(answers[0], OLD), regs[0].new_code)
+
+    def test_nvd_cwe_labels_are_valid(self):
+        from pipeline.output_parser import parse_detection_output
+        _, status, _ = parse_detection_output(
+            '{"is_vulnerable": true, "cwe": "NVD-CWE-Other", "evidence": null, "reasoning": "r"}')
+        self.assertEqual(status, "valid")
 
 
 class TestStatistics(unittest.TestCase):

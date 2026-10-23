@@ -60,8 +60,11 @@ NON_SECURITY_RULES = {"syntaxError", "internalAstError", "unknownMacro", "prepro
 
 def run_cppcheck(path: Path, timeout: int = 300) -> List[Finding]:
     template = "{line}|{severity}|{id}|{cwe}|{message}"
+    # --max-configs=1: analyse one preprocessor configuration. Large benchmark files have many
+    # #ifdef combinations; checking all of them takes minutes per file without changing the
+    # differential (old vs. patched) comparison, which uses the same setting for both.
     argv = ["cppcheck", "--enable=warning,style,performance,portability", "--inconclusive",
-            "--quiet", f"--template={template}"]
+            "--max-configs=1", "--quiet", f"--template={template}"]
     if path.suffix in (".cpp", ".cc", ".cxx", ".hpp", ".hh"):
         argv.append("--language=c++")
     elif path.suffix in (".c", ".h"):

@@ -118,6 +118,30 @@ class PatchedFile:
     old_sha256: str           # sha256 of the benchmark OLD file bytes
     content: bytes
     diff: str                 # unified diff with a/<repo_path> b/<repo_path> headers (fallback)
+    # (sha256 of an OLD-file form, patched content in the same line-ending form). Lets the
+    # sandbox match checkouts whose line endings differ from the benchmark copy (LF vs CRLF).
+    variants: List[Any] = field(default_factory=list)
+
+
+def _eol(data: bytes, crlf: bool) -> bytes:
+    lf = data.replace(b"\r\n", b"\n")
+    return lf.replace(b"\n", b"\r\n") if crlf else lf
+
+
+def make_patched_file(file_name: str, repo_path: Optional[str], old_bytes: bytes,
+                      content: bytes, diff: str) -> "PatchedFile":
+    import hashlib
+
+    sha = lambda b: hashlib.sha256(b).hexdigest()  # noqa: E731
+    variants, seen = [], set()
+    for old_v, new_v in ((old_bytes, content), (_eol(old_bytes, False), _eol(content, False)),
+                         (_eol(old_bytes, True), _eol(content, True))):
+        h = sha(old_v)
+        if h not in seen:
+            seen.add(h)
+            variants.append((h, new_v))
+    return PatchedFile(file_name=file_name, repo_path=repo_path, old_sha256=sha(old_bytes),
+                       content=content, diff=diff, variants=variants)
 
 
 @dataclass
@@ -284,9 +308,11 @@ class CaseSandbox:
 
     def _place_file(self, idx: int, pf: PatchedFile) -> CommandResult:
         q = shlex.quote
-        content_path = f"{self.upload_dir}/f{idx}.bin"
         diff_path = f"{self.upload_dir}/f{idx}.diff"
-        for path, data in ((content_path, pf.content), (diff_path, pf.diff.encode("utf-8", "surrogateescape"))):
+        variants = pf.variants or [(pf.old_sha256, pf.content)]
+        uploads = [(f"{self.upload_dir}/f{idx}_{v}.bin", data) for v, (_, data) in enumerate(variants)]
+        uploads.append((diff_path, pf.diff.encode("utf-8", "surrogateescape")))
+        for path, data in uploads:
             up = self._upload(path, data)
             if up.exit_code != 0:
                 return up
@@ -302,10 +328,13 @@ class CaseSandbox:
         script = (
             f"cd {q(self.case_dir)}/source && {locate}"
             f"if [ ! -f \"$f\" ]; then echo \"VUL4C_EVAL: file not found: $f\"; exit 3; fi; "
-            f"if [ \"$(sha256sum \"$f\" | cut -d' ' -f1)\" = {q(pf.old_sha256)} ]; then "
-            f"cp {q(content_path)} \"$f\" && echo \"VUL4C_EVAL: replaced $f\"; "
-            f"else sed -i \"s#^--- a/.*#--- a/$f#; s#^+++ b/.*#+++ b/$f#\" {q(diff_path)} && "
-            f"patch -p1 --batch --forward -i {q(diff_path)} && echo \"VUL4C_EVAL: patched $f\"; fi"
+            f"s=$(sha256sum \"$f\" | cut -d' ' -f1); "
+            + "".join(
+                f"{'if' if v == 0 else 'elif'} [ \"$s\" = {q(h)} ]; then "
+                f"cp {q(uploads[v][0])} \"$f\" && echo \"VUL4C_EVAL: replaced $f\"; "
+                for v, (h, _) in enumerate(variants))
+            + f"else sed -i \"s#^--- a/.*#--- a/$f#; s#^+++ b/.*#+++ b/$f#\" {q(diff_path)} && "
+            f"patch -p1 --batch --forward --ignore-whitespace -i {q(diff_path)} && echo \"VUL4C_EVAL: patched $f\"; fi"
         )
         return self._sh(script, self.cfg.timeouts["apply"])
 

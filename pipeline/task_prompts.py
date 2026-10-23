@@ -38,7 +38,10 @@ def _render_regions(regions: List[CodeRegion], use_new: bool = False) -> str:
     for i, r in enumerate(regions, 1):
         code = r.new_code if use_new else r.old_code
         heading = f"### REGION {i}: {r.file_name}" if len(regions) > 1 else f"### File: {r.file_name}"
-        parts.append(f"{heading}\n```{_lang(r.file_name)}\n{code.rstrip()}\n```")
+        # Drop exactly one final newline (the fence supplies it); keep trailing blank lines,
+        # spaces and CRLF so an unchanged answer splices back byte-for-byte.
+        body = code[:-1] if code.endswith("\n") else code
+        parts.append(f"{heading}\n```{_lang(r.file_name)}\n{body}\n```")
     return "\n\n".join(parts)
 
 

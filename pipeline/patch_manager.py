@@ -233,7 +233,8 @@ _REGION_HEADING_RE = re.compile(r"REGION\s+(\d+)", re.I)
 
 
 def extract_code_blocks(text: str) -> List[str]:
-    return [m.group(2) for m in _FENCE_RE.finditer(text or "")]
+    """Fenced code blocks, each ending with the newline that precedes its closing fence."""
+    return [m.group(2) + "\n" for m in _FENCE_RE.finditer(text or "")]
 
 
 def parse_region_answers(text: str, n_regions: int) -> Tuple[Dict[int, str], List[str]]:
@@ -285,6 +286,8 @@ def splice_regions(old_text: str, regions: List[CodeRegion], answers: Dict[int, 
         if code and not code.endswith("\n"):
             code += "\n"
         r = regions[i]
+        if r.old_end >= len(lines) and not old_text.endswith("\n"):
+            code = code.rstrip("\r\n")  # region at end of a file without a final newline
         lines[r.old_start:r.old_end] = code.splitlines(keepends=True)
     return "".join(lines)
 

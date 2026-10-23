@@ -57,6 +57,10 @@ The `vul4c` source (`Vul4C_Src/vul4c_tools.py`) shows three things that matter:
 
 The pipeline therefore writes each patched file directly into `source/<path>`, byte for byte, when the checked-out file matches the benchmark's OLD file (checked by sha256). Otherwise it applies the patch as a unified diff with GNU `patch`. Each variant is restored from a pristine backup to the same absolute path, because autotools records absolute paths. Indexed pairs such as `sfconvert.c_OLD-1` / `_OLD-2` are successive patches to one file, so they are merged: first OLD to last NEW.
 
+Line endings are handled explicitly. Prompts show region code exactly, including trailing blank lines and spaces. Model answers are converted to the file's own line endings (CRLF or LF). The sandbox accepts a checkout whose line endings differ from the benchmark copy, for example a Windows clone with `core.autocrlf`, by matching the LF and CRLF forms of the OLD file. Returning the unchanged code (`identity`) or the human fix (`oracle`) reproduces the original or fixed file byte for byte in all 136 cases. A test guards this.
+
+The evaluate stage rebuilds every candidate patch from the raw model output stored in `generations.jsonl`. After a pipeline fix, delete `evaluations.jsonl` (and `calibration.jsonl` if the sandbox setup changed) and re-run `--stage evaluate`; the models don't need to be queried again.
+
 `tests_preserved` compares the candidate's test summary with the human fix's summary. It is true when the candidate passes at least as many tests and has no more failures or errors. If no summary is printed, the result is unknown.
 
 ## Security side effects and manual review

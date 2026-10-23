@@ -41,7 +41,8 @@ _SCHEMA_ECHO_PATTERNS = (
 _BARE_TYPE_VALUE = re.compile(
     r'"\s*:\s*(boolean|bool|string(\s+or\s+null)?|str|integer|int)\s*[,}\n(]', re.I
 )
-_CWE_RE = re.compile(r"^CWE-\d+$", re.I)
+# Numeric CWEs plus the NVD placeholders used by some benchmark labels.
+_CWE_RE = re.compile(r"^(?:NVD-)?CWE-(?:\d+|Other|noinfo)$", re.I)
 
 STATUS_VALID = "valid"
 STATUS_EMPTY = "empty"

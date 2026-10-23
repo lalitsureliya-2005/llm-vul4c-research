@@ -57,7 +57,7 @@ from pipeline.task_prompts import (  # noqa: E402
     oracle_repair_answer, sanity_detection_answer,
 )
 from pipeline.vul4c_runner import (  # noqa: E402
-    CaseSandbox, PatchedFile, SandboxConfig, calibration_from, tests_preserved,
+    CaseSandbox, PatchedFile, SandboxConfig, calibration_from, make_patched_file, tests_preserved,
 )
 
 logger = logging.getLogger("run_experiment")
@@ -225,7 +225,7 @@ def prepare_cases(cfg: Dict[str, Any]) -> (List[PreparedCase], List[Dict[str, st
             files.append({
                 "file_name": name, "repo_path": repo_path, "encoding": encoding,
                 "old_text": old_text, "new_text": new_text,
-                "old_sha256": hashlib.sha256(old_bytes).hexdigest(),
+                "old_sha256": hashlib.sha256(old_bytes).hexdigest(), "old_bytes": old_bytes,
                 "header_old": f"a/{label}", "header_new": f"b/{label}",
                 "merged_patches": len(items),
             })
@@ -251,10 +251,13 @@ def prepare_cases(cfg: Dict[str, Any]) -> (List[PreparedCase], List[Dict[str, st
 
 
 def _match_newlines(code: str, like: str) -> str:
-    """Use CRLF in model output when the original file uses CRLF."""
-    if "\r\n" in like:
-        return code.replace("\r\n", "\n").replace("\n", "\r\n")
-    return code
+    """Give model output the original file's line endings (CRLF or LF), in both directions.
+
+    Prompts built from a CRLF copy of the benchmark (e.g. a Windows checkout) yield CRLF
+    answers; evaluated against an LF copy they must be converted back, and vice versa.
+    """
+    lf = code.replace("\r\n", "\n")
+    return lf.replace("\n", "\r\n") if "\r\n" in like else lf
 
 
 def build_candidate(case: PreparedCase, answers: Dict[int, str]) -> Dict[str, Any]:
@@ -271,10 +274,8 @@ def build_candidate(case: PreparedCase, answers: Dict[int, str]) -> Dict[str, An
             changed = True
             diff = make_unified_diff(f["old_text"], cand_text, f["header_old"], f["header_new"])
             patch_parts.append(diff)
-            payload.append(PatchedFile(
-                file_name=f["file_name"], repo_path=f["repo_path"], old_sha256=f["old_sha256"],
-                content=_encode(cand_text, f["encoding"]), diff=diff,
-            ))
+            payload.append(make_patched_file(f["file_name"], f["repo_path"], f["old_bytes"],
+                                             _encode(cand_text, f["encoding"]), diff))
         if normalize_code(cand_text) != normalize_code(f["new_text"]):
             identical = False
         cand_files.append({"file_name": f["file_name"], "old_text": f["old_text"], "candidate_text": cand_text})
@@ -286,11 +287,8 @@ def build_candidate(case: PreparedCase, answers: Dict[int, str]) -> Dict[str, An
 def reference_payload(case: PreparedCase) -> List[PatchedFile]:
     """The developer fix as sandbox payload (NEW content for every file)."""
     return [
-        PatchedFile(
-            file_name=f["file_name"], repo_path=f["repo_path"], old_sha256=f["old_sha256"],
-            content=_encode(f["new_text"], f["encoding"]),
-            diff=make_unified_diff(f["old_text"], f["new_text"], f["header_old"], f["header_new"]),
-        )
+        make_patched_file(f["file_name"], f["repo_path"], f["old_bytes"], _encode(f["new_text"], f["encoding"]),
+                          make_unified_diff(f["old_text"], f["new_text"], f["header_old"], f["header_new"]))
         for f in case.files
     ]
 
@@ -457,8 +455,7 @@ def run_evaluation(cfg: Dict[str, Any], cases: List[PreparedCase], out: Path,
                                                  "reasons": [f"sandbox_start_failed: {err}"]}
                         append_jsonl(cal_path, calibration[case_key])
                     sandbox = None
-                need_vuln = case_key not in calibration or any(not g.get("changed") for g in gens)
-                if sandbox is not None and need_vuln:
+                if sandbox is not None and case_key not in calibration:
                     vuln = sandbox.evaluate("vulnerable", None)
                     variant_cache["__vulnerable__"] = vuln
                     if case_key not in calibration:
@@ -476,6 +473,13 @@ def run_evaluation(cfg: Dict[str, Any], cases: List[PreparedCase], out: Path,
             ref_summary = cal.get("reference_test_summary")
 
             for g in gens:
+                # Re-derive the candidate from the raw model output with the current code, so fixes
+                # to splicing apply to old generations without querying the model again.
+                answers, _ = parse_region_answers(g.get("output", ""), len(case.regions)) \
+                    if g.get("finish_reason") != "error" else ({}, [])
+                cand = build_candidate(case, answers)
+                g = dict(g, changed=cand["changed"], identical_to_reference=cand["identical_to_reference"],
+                         patch=cand["patch"], patch_sha256=hashlib.sha256(cand["patch"].encode()).hexdigest())
                 ev: Dict[str, Any] = {
                     "key": g["key"], "model": g["model"], "case_key": case_key, "cve_id": case.cve_id,
                     "true_cwe": case.cwe_id, "cwe_family": cwe_family(cwe_number(case.cwe_id)),
@@ -483,8 +487,6 @@ def run_evaluation(cfg: Dict[str, Any], cases: List[PreparedCase], out: Path,
                     "changed": g.get("changed"), "identical_to_reference": g.get("identical_to_reference"),
                     "case_calibrated": calibrated, "patch_sha256": g.get("patch_sha256"),
                 }
-                answers, _ = parse_region_answers(g.get("output", ""), len(case.regions))
-                cand = build_candidate(case, answers)
                 # Static analysis on the host
                 if tools and g.get("changed"):
                     ev["static"] = analyze_patch(cand["files"], tools, cache=sa_cache)
@@ -496,7 +498,9 @@ def run_evaluation(cfg: Dict[str, Any], cases: List[PreparedCase], out: Path,
                 variant = None
                 if sandbox is not None and (calibrated or cfg["sandbox"].get("evaluate_uncalibrated")):
                     if not g.get("changed"):
-                        variant = variant_cache.get("__vulnerable__")
+                        if "__vulnerable__" not in variant_cache:
+                            variant_cache["__vulnerable__"] = sandbox.evaluate("vulnerable", None)
+                        variant = variant_cache["__vulnerable__"]
                         ev["dynamic_note"] = "unchanged code; reused vulnerable-version result"
                     elif g["patch_sha256"] in variant_cache:
                         variant = variant_cache[g["patch_sha256"]]
@@ -574,8 +578,14 @@ def run_report(cfg: Dict[str, Any], out: Path) -> Dict[str, Any]:
     verdicts = review.get("verdicts", {})
     sanity = {m["name"] for m in cfg.get("models", []) if m.get("provider") in ("oracle", "identity")}
 
+    det_gens = []
+    for g in gens:
+        if g["task"] == "detection" and g.get("finish_reason") != "error":
+            parsed, status, perr = parse_detection_output(g.get("output"))
+            g = dict(g, parsed_output=parsed, parse_status=status, parse_error=perr)
+        det_gens.append(g)
     det_rows = []
-    for model, recs in sorted(group_by([g for g in gens if g["task"] == "detection"], "model").items()):
+    for model, recs in sorted(group_by([g for g in det_gens if g["task"] == "detection"], "model").items()):
         det_rows.append({"model": model, **detection_metrics(recs)})
     rep_rows = []
     for model, recs in sorted(group_by(evals, "model").items()):
