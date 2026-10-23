@@ -1,0 +1,354 @@
+{
+  "detection": [
+    {
+      "model": "identity",
+      "samples": 272,
+      "valid_output_rate": 0.9706,
+      "tp": 132,
+      "fp": 132,
+      "tn": 4,
+      "fn": 4,
+      "accuracy": 0.5,
+      "precision": 0.5,
+      "recall": 0.9706,
+      "f1": 0.66,
+      "false_positive_rate": 0.9706,
+      "pairs": 136,
+      "pair_accuracy": 0.0,
+      "cwe_evaluated": 132,
+      "cwe_exact": 1.0,
+      "cwe_family": 1.0
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "samples": 272,
+      "valid_output_rate": 1.0,
+      "tp": 135,
+      "fp": 135,
+      "tn": 1,
+      "fn": 1,
+      "accuracy": 0.5,
+      "precision": 0.5,
+      "recall": 0.9926,
+      "f1": 0.665,
+      "false_positive_rate": 0.9926,
+      "pairs": 136,
+      "pair_accuracy": 0.0,
+      "cwe_evaluated": 131,
+      "cwe_exact": 0.0763,
+      "cwe_family": 0.4733
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "samples": 272,
+      "valid_output_rate": 1.0,
+      "tp": 26,
+      "fp": 30,
+      "tn": 106,
+      "fn": 110,
+      "accuracy": 0.4853,
+      "precision": 0.4643,
+      "recall": 0.1912,
+      "f1": 0.2709,
+      "false_positive_rate": 0.2206,
+      "pairs": 136,
+      "pair_accuracy": 0.0441,
+      "cwe_evaluated": 24,
+      "cwe_exact": 0.2083,
+      "cwe_family": 0.4583
+    },
+    {
+      "model": "oracle",
+      "samples": 272,
+      "valid_output_rate": 0.9853,
+      "tp": 132,
+      "fp": 0,
+      "tn": 136,
+      "fn": 4,
+      "accuracy": 0.9853,
+      "precision": 1.0,
+      "recall": 0.9706,
+      "f1": 0.9851,
+      "false_positive_rate": 0.0,
+      "pairs": 136,
+      "pair_accuracy": 0.9706,
+      "cwe_evaluated": 132,
+      "cwe_exact": 1.0,
+      "cwe_family": 1.0
+    }
+  ],
+  "repair": [
+    {
+      "model": "identity",
+      "candidates": 136,
+      "cases": 136,
+      "calibrated_candidates": 0,
+      "calibrated_cases": 0,
+      "generated_rate": 1.0,
+      "changed_code_rate": 1.0,
+      "applied_rate": null,
+      "compiled_rate": null,
+      "exploit_blocked_rate": null,
+      "tests_preserved_rate": null,
+      "tests_unknown": 0,
+      "new_high_static_issue_rate": 0.0,
+      "secure_and_functional_rate": null,
+      "identical_to_reference_rate": 0.0,
+      "pass@1": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "candidates": 136,
+      "cases": 136,
+      "calibrated_candidates": 0,
+      "calibrated_cases": 0,
+      "generated_rate": 0.9118,
+      "changed_code_rate": 0.9853,
+      "applied_rate": null,
+      "compiled_rate": null,
+      "exploit_blocked_rate": null,
+      "tests_preserved_rate": null,
+      "tests_unknown": 0,
+      "new_high_static_issue_rate": 0.0,
+      "secure_and_functional_rate": null,
+      "identical_to_reference_rate": 0.0,
+      "pass@1": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "candidates": 136,
+      "cases": 136,
+      "calibrated_candidates": 0,
+      "calibrated_cases": 0,
+      "generated_rate": 0.8971,
+      "changed_code_rate": 0.9338,
+      "applied_rate": null,
+      "compiled_rate": null,
+      "exploit_blocked_rate": null,
+      "tests_preserved_rate": null,
+      "tests_unknown": 0,
+      "new_high_static_issue_rate": 0.0,
+      "secure_and_functional_rate": null,
+      "identical_to_reference_rate": 0.0,
+      "pass@1": null
+    },
+    {
+      "model": "oracle",
+      "candidates": 136,
+      "cases": 136,
+      "calibrated_candidates": 0,
+      "calibrated_cases": 0,
+      "generated_rate": 1.0,
+      "changed_code_rate": 1.0,
+      "applied_rate": null,
+      "compiled_rate": null,
+      "exploit_blocked_rate": null,
+      "tests_preserved_rate": null,
+      "tests_unknown": 0,
+      "new_high_static_issue_rate": 0.0,
+      "secure_and_functional_rate": null,
+      "identical_to_reference_rate": 1.0,
+      "pass@1": null
+    }
+  ],
+  "repair_by_cwe_family": [
+    {
+      "model": "identity",
+      "cwe_family": "bounds",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "identity",
+      "cwe_family": "input_validation",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "identity",
+      "cwe_family": "integer",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "identity",
+      "cwe_family": "lifetime",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "identity",
+      "cwe_family": "null",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "identity",
+      "cwe_family": "resource",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "identity",
+      "cwe_family": "unknown",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "bounds",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "input_validation",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "integer",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "lifetime",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "null",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "resource",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-1.5b",
+      "cwe_family": "unknown",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "bounds",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "input_validation",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "integer",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "lifetime",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "null",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "resource",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "ollama-qwen-7b",
+      "cwe_family": "unknown",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "bounds",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "input_validation",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "integer",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "lifetime",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "null",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "resource",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    },
+    {
+      "model": "oracle",
+      "cwe_family": "unknown",
+      "calibrated_candidates": 0,
+      "exploit_blocked_rate": null,
+      "secure_and_functional_rate": null
+    }
+  ],
+  "calibrated_cases": 0,
+  "evaluated_cases": 0
+}

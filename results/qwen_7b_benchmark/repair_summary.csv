@@ -1,0 +1,4 @@
+model,candidates,cases,calibrated_candidates,calibrated_cases,generated_rate,changed_code_rate,applied_rate,compiled_rate,exploit_blocked_rate,tests_preserved_rate,tests_unknown,new_high_static_issue_rate,secure_and_functional_rate,identical_to_reference_rate,pass@1
+identity,136,136,0,0,1.0,1.0,,,,,0,0.0,,0.0,
+ollama-qwen-7b,136,136,0,0,0.8971,0.9338,,,,,0,0.0,,0.0,
+oracle,136,136,0,0,1.0,1.0,,,,,0,0.0,,1.0,

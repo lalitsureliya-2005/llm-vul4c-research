@@ -1,0 +1,4 @@
+model,compiled_patches,plausible_patches,compiled_with_new_issue_rate,plausible_with_new_issue_rate,plausible_with_confirmed_issue_rate,new_findings_in_plausible,reviewed_findings,review_precision,secure_and_functional_confirmed_rate
+identity,0,0,,,,0,0,,
+ollama-qwen-7b,0,0,,,,0,0,,
+oracle,0,0,,,,0,0,,

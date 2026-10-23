@@ -8,6 +8,9 @@ __pycache__/
 logs/*
 results/*
 !results/.gitkeep
+!results/qwen_1.5b_benchmark/**
+!results/qwen_7b_benchmark/**
+!results/comparison_1.5b_vs_7b/**
 cases/*
 !cases/README.md
 *.o
