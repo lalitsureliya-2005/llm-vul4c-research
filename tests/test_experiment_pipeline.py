@@ -205,6 +205,112 @@ class TestEndToEndPipeline(unittest.TestCase):
         rx.run_report(self.cfg, self.out)
 
 
+@unittest.skipUnless(shutil.which("flawfinder") or shutil.which("cppcheck"), "static analysis tools not installed")
+class TestSideEffectsReviewAndSignificance(unittest.TestCase):
+    """A patch that blocks the exploit but adds strcpy must be reported as a working patch with a new issue."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        write_fake_benchmark(self.tmp / "bench")
+        fixed_but_unsafe = ("int parse_header(const char *buf, int n)\n{\n    char tmp[8];\n    char name[4];\n"
+                            "    if (n > 8)\n        return -1;\n    strcpy(name, buf);\n    memcpy(tmp, buf, n);\n"
+                            "    return tmp[0] + name[0];\n}\n")
+        clean_fix = NEW.splitlines(True)[7:15]
+        self.cfg = rx._merge(rx.DEFAULTS, {
+            "experiment_name": "t", "output_dir": str(self.tmp / "out"),
+            "benchmark_root": str(self.tmp / "bench"), "cases": ["demo/CVE-2099-0001"],
+            "models": [
+                {"name": "oracle", "provider": "oracle"},
+                {"name": "sideeffect", "provider": "scripted", "answers": {
+                    "detection": "{}", "repair": "```c\n" + fixed_but_unsafe + "```"}},
+                {"name": "clean", "provider": "scripted", "answers": {
+                    "detection": "{}", "repair": "```c\n" + "".join(clean_fix) + "```"}},
+            ],
+        })
+        self.out = Path(self.cfg["output_dir"]) / "t"
+        self.out.mkdir(parents=True)
+        cases, _ = rx.prepare_cases(self.cfg)
+        rx.run_generation(self.cfg, cases, self.out, client_factory=factory)
+        fake = FakeDocker()
+        rx.run_evaluation(self.cfg, cases, self.out,
+                          sandbox_factory=lambda c, cve: CaseSandbox(c, cve, executor=fake))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_side_effects_review_cycle_and_significance(self):
+        from pipeline import review
+
+        summary = rx.run_report(self.cfg, self.out)
+        side = {r["model"]: r for r in summary["side_effects"]}
+        self.assertEqual(side["sideeffect"]["plausible_patches"], 1)
+        self.assertEqual(side["sideeffect"]["plausible_with_new_issue_rate"], 1.0)
+        self.assertEqual(side["clean"]["plausible_with_new_issue_rate"], 0.0)
+        self.assertIsNone(side["sideeffect"]["plausible_with_confirmed_issue_rate"])
+        self.assertTrue(any(r["model"] == "sideeffect" for r in summary["introduced_issues_by_cwe"]))
+        sig_models = {(r["model_a"], r["model_b"]) for r in summary["significance"]}
+        self.assertEqual(sig_models, {("clean", "sideeffect")})  # sanity models excluded
+
+        res = review.export_review(self.cfg, self.out)
+        self.assertGreaterEqual(res["items"], 1)
+        sheet = self.out / "review" / "review_sheet.csv"
+        packet = (self.out / "review" / "review_packet.html").read_text()
+        self.assertIn("strcpy", packet)
+        self.assertNotIn("sideeffect", sheet.read_text())  # blinded
+        key = json.loads((self.out / "review" / "model_key.json").read_text())
+        self.assertIn("sideeffect", key)
+
+        # Two reviewers: agree "real" on the first finding, disagree on any others (no final).
+        import csv
+        rows = list(csv.DictReader(open(sheet, encoding="utf-8")))
+        for i, r in enumerate(rows):
+            r["reviewer_1"] = "real"
+            r["reviewer_2"] = "real" if i == 0 else "fa"
+        with open(sheet, "w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=review.SHEET_COLUMNS)
+            w.writeheader()
+            w.writerows(rows)
+
+        # Re-export keeps the verdicts already entered
+        again = review.export_review(self.cfg, self.out)
+        self.assertEqual(again["kept_verdicts"], len(rows))
+
+        imported = review.import_review(self.out)
+        self.assertEqual(imported["real"], 1)
+        self.assertEqual(len(imported["unresolved_disagreements"]), len(rows) - 1)
+
+        summary = rx.run_report(self.cfg, self.out)
+        side = {r["model"]: r for r in summary["side_effects"]}
+        self.assertEqual(side["sideeffect"]["plausible_with_confirmed_issue_rate"], 1.0)
+        self.assertEqual(side["sideeffect"]["secure_and_functional_confirmed_rate"], 0.0)
+        self.assertEqual(side["clean"]["secure_and_functional_confirmed_rate"], 1.0)
+        report = (self.out / "report.md").read_text()
+        self.assertIn("Security side effects of repairs", report)
+        self.assertIn("McNemar", report)
+
+    def test_label_normalisation(self):
+        from pipeline.review import normalize_label
+        self.assertEqual(normalize_label(" FA "), "false_alarm")
+        self.assertEqual(normalize_label("Real"), "real")
+        self.assertIsNone(normalize_label(""))
+        with self.assertRaises(ValueError):
+            normalize_label("maybe")
+
+
+class TestStatistics(unittest.TestCase):
+
+    def test_mcnemar_holm_kappa(self):
+        from pipeline.metrics import cohen_kappa, holm, mcnemar_exact, pairwise_mcnemar
+        self.assertAlmostEqual(mcnemar_exact(0, 6), 0.03125)
+        self.assertEqual(mcnemar_exact(3, 3), 1.0)
+        self.assertEqual(holm([0.01, 0.04, 0.03]), [0.03, 0.06, 0.06])
+        self.assertEqual(cohen_kappa([("real", "real"), ("false_alarm", "false_alarm"),
+                                      ("real", "false_alarm"), ("real", "real")]), 0.5)
+        rows = pairwise_mcnemar({"a": {1: True, 2: True, 3: False}, "b": {1: False, 2: True, 3: False, 4: True}})
+        self.assertEqual(rows[0]["paired_units"], 3)
+        self.assertEqual((rows[0]["only_a"], rows[0]["only_b"]), (1, 0))
+
+
 class TestSandboxCalibration(unittest.TestCase):
 
     def test_uncalibrated_when_exploit_does_not_reproduce(self):

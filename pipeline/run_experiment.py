@@ -43,7 +43,8 @@ from pipeline.case_manager import CaseManager, CaseManagerError  # noqa: E402
 from pipeline.inference import DETECTION_RESPONSE_PREFIX  # noqa: E402
 from pipeline.llm_clients import LLMClient, build_client  # noqa: E402
 from pipeline.metrics import (  # noqa: E402
-    cwe_family, cwe_number, detection_metrics, group_by, repair_metrics, secure_and_functional,
+    assign_finding_ids, cwe_family, cwe_number, detection_metrics, group_by, introduced_cwe_counts,
+    is_plausible, pairwise_mcnemar, repair_metrics, secure_and_functional, side_effect_metrics,
 )
 from pipeline.output_parser import parse_detection_output  # noqa: E402
 from pipeline.patch_manager import (  # noqa: E402
@@ -515,6 +516,7 @@ def run_evaluation(cfg: Dict[str, Any], cases: List[PreparedCase], out: Path,
                     ev["tests_preserved"] = tests_preserved(variant.test_summary, ref_summary)
                 else:
                     ev["status"] = "not_run" if not use_docker else ("case_not_calibrated" if not calibrated else "not_run")
+                assign_finding_ids(ev)
                 ev["secure_and_functional"] = secure_and_functional(ev) if calibrated else None
                 ev["timestamp"] = datetime.now(timezone.utc).isoformat()
                 append_jsonl(eval_path, ev)
@@ -554,11 +556,23 @@ def _write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         w.writerows(rows)
 
 
+def load_review(out: Path) -> Dict[str, Any]:
+    """Imported manual-review verdicts (written by scripts/review_findings.py import)."""
+    path = out / "review" / "verdicts.json"
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def run_report(cfg: Dict[str, Any], out: Path) -> Dict[str, Any]:
     gens = read_jsonl(out / "generations.jsonl")
-    evals = read_jsonl(out / "evaluations.jsonl")
+    evals = [assign_finding_ids(e) for e in read_jsonl(out / "evaluations.jsonl")]
     cals = read_jsonl(out / "calibration.jsonl")
     ks = cfg.get("pass_at_k", [1])
+    review = load_review(out)
+    verdicts = review.get("verdicts", {})
+    sanity = {m["name"] for m in cfg.get("models", []) if m.get("provider") in ("oracle", "identity")}
 
     det_rows = []
     for model, recs in sorted(group_by([g for g in gens if g["task"] == "detection"], "model").items()):
@@ -574,9 +588,31 @@ def run_report(cfg: Dict[str, Any], out: Path) -> Dict[str, Any]:
                              "exploit_blocked_rate": m["exploit_blocked_rate"],
                              "secure_and_functional_rate": m["secure_and_functional_rate"]})
 
+    side_rows = []
+    cwe_rows = []
+    for model, recs in sorted(group_by(evals, "model").items()):
+        side_rows.append({"model": model, **side_effect_metrics(recs, verdicts)})
+        for cwe, n in introduced_cwe_counts(recs).items():
+            row = {"model": model, "introduced_issue": cwe, "count": n}
+            if verdicts:
+                row["confirmed"] = introduced_cwe_counts(recs, verdicts, confirmed_only=True).get(cwe, 0)
+            cwe_rows.append(row)
+
+    # Paired significance tests between real models on the same calibrated case+sample.
+    sig_rows = []
+    calibrated = [e for e in evals if e.get("case_calibrated") and e["model"] not in sanity]
+    for outcome_name, fn in (("secure_and_functional", secure_and_functional), ("exploit_blocked", is_plausible)):
+        outcomes = {m: {(e["case_key"], e.get("sample", 0)): bool(fn(e)) for e in recs}
+                    for m, recs in group_by(calibrated, "model").items()}
+        if len(outcomes) >= 2:
+            sig_rows += [{"outcome": outcome_name, **r} for r in pairwise_mcnemar(outcomes)]
+
     _write_csv(out / "detection_summary.csv", det_rows)
     _write_csv(out / "repair_summary.csv", rep_rows)
     _write_csv(out / "repair_by_cwe_family.csv", fam_rows)
+    _write_csv(out / "repair_side_effects.csv", side_rows)
+    _write_csv(out / "introduced_issues_by_cwe.csv", cwe_rows)
+    _write_csv(out / "significance.csv", sig_rows)
 
     n_cal = sum(1 for c in cals if c.get("calibrated"))
     pct_det = ["valid_output_rate", "accuracy", "precision", "recall", "f1", "false_positive_rate",
@@ -611,6 +647,34 @@ def run_report(cfg: Dict[str, Any], out: Path) -> Dict[str, Any]:
                   "suite still passes (when it passes for the human fix), and no new high-severity static "
                   "analysis findings.", "",
                   _table(rep_rows, ["model", "candidates", "calibrated_candidates"] + pct_rep, pct_rep)]
+    if side_rows:
+        side_pct = ["compiled_with_new_issue_rate", "plausible_with_new_issue_rate",
+                    "plausible_with_confirmed_issue_rate", "review_precision", "secure_and_functional_confirmed_rate"]
+        lines += ["## Security side effects of repairs", "",
+                  "How often a patch that works (compiles and blocks the exploit, `plausible`) introduces a new "
+                  "high-severity static-analysis finding that the vulnerable original did not have. Denominators "
+                  "are working patches only. `*_confirmed` columns count only findings a reviewer marked as real "
+                  "(see `scripts/review_findings.py`); `review_precision` is the share of reviewed findings that "
+                  "were real. Limitation: the sandbox runs only each case's own proof-of-concept, so a new memory "
+                  "error elsewhere in a patch is detected only by static analysis, not dynamically.", "",
+                  _table(side_rows, ["model", "compiled_patches", "plausible_patches", "new_findings_in_plausible",
+                                     "reviewed_findings"] + side_pct, side_pct)]
+        if review:
+            lines += [f"Manual review: {review.get('reviewed', 0)} findings reviewed; Cohen's kappa between "
+                      f"reviewers = {review.get('kappa', '-')}.", ""]
+        else:
+            lines += ["No manual review imported yet; the rates above are tool-reported and include false alarms.", ""]
+    if cwe_rows:
+        cols = ["model", "introduced_issue", "count"] + (["confirmed"] if verdicts else [])
+        lines += ["## Issues introduced by working patches, by CWE", "",
+                  "High-severity findings introduced by patches that compiled (CWE from the tool, or tool:rule "
+                  "when the tool gives none).", "", _table(cwe_rows, cols, [])]
+    if sig_rows:
+        lines += ["## Significance (paired exact McNemar test, Holm-corrected)", "",
+                  "Each pair of models is compared on the same calibrated cases. `only_a` / `only_b` = cases "
+                  "where only that model succeeded. Sanity models are excluded.", "",
+                  _table(sig_rows, ["outcome", "model_a", "model_b", "paired_units", "a_success", "b_success",
+                                    "only_a", "only_b", "p_value", "p_holm", "significant_0.05"], [])]
     if fam_rows:
         lines += ["## Repair by CWE family", "",
                   _table(fam_rows, ["model", "cwe_family", "calibrated_candidates", "exploit_blocked_rate",
@@ -623,6 +687,7 @@ def run_report(cfg: Dict[str, Any], out: Path) -> Dict[str, Any]:
               "score of a model with no discrimination ability.", ""]
     (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
     summary = {"detection": det_rows, "repair": rep_rows, "repair_by_cwe_family": fam_rows,
+               "side_effects": side_rows, "introduced_issues_by_cwe": cwe_rows, "significance": sig_rows,
                "calibrated_cases": n_cal, "evaluated_cases": len(cals)}
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary

@@ -23,7 +23,7 @@ Repair (only cases whose calibration succeeded count for dynamic metrics):
 from collections import defaultdict
 from math import comb
 import re
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # Coarse CWE families for "related CWE" credit. Edit to suit your taxonomy.
 CWE_FAMILIES: Dict[str, set] = {
@@ -164,3 +164,156 @@ def group_by(records: Iterable[Dict[str, Any]], key: str) -> Dict[str, List[Dict
     for r in records:
         groups[r.get(key) or "unknown"].append(r)
     return dict(groups)
+
+
+# --------------------------------------------------------------------------- #
+# Security side effects of repairs
+# --------------------------------------------------------------------------- #
+
+def is_plausible(e: Dict[str, Any]) -> bool:
+    """Compiles and the proof-of-concept exploit no longer crashes."""
+    return bool(e.get("case_calibrated") and e.get("compiled") and e.get("exploit_outcome") == "no_crash")
+
+
+def introduced_high(e: Dict[str, Any], verdicts: Optional[Dict[str, str]] = None,
+                    confirmed_only: bool = False) -> List[Dict[str, Any]]:
+    """High-severity findings the patch introduced.
+
+    With ``confirmed_only``, keep only findings a reviewer marked "real"
+    (``verdicts`` maps finding_id -> "real" / "false_alarm" / "unsure").
+    """
+    found = [f for f in (e.get("static") or {}).get("introduced", []) if f.get("high")]
+    if confirmed_only:
+        verdicts = verdicts or {}
+        found = [f for f in found if verdicts.get(f.get("finding_id", "")) == "real"]
+    return found
+
+
+def side_effect_metrics(evaluations: Iterable[Dict[str, Any]],
+                        verdicts: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """How often repairs that work also introduce new security issues.
+
+    Denominators are working patches only (not patches that fail to compile).
+    ``*_confirmed`` rates count only findings confirmed as real by manual review;
+    they are None until a review has been imported.
+    """
+    evs = list(evaluations)
+    compiled = [e for e in evs if e.get("case_calibrated") and e.get("compiled") and e.get("changed")]
+    plausible = [e for e in compiled if is_plausible(e)]
+    have_review = bool(verdicts)
+
+    def share(pool, confirmed=False):
+        return _rate(sum(1 for e in pool if introduced_high(e, verdicts, confirmed)), len(pool))
+
+    calibrated = [e for e in evs if e.get("case_calibrated")]
+    secure_confirmed = None
+    if have_review:
+        secure_confirmed = _rate(sum(
+            1 for e in calibrated
+            if is_plausible(e) and e.get("tests_preserved") is not False and not introduced_high(e, verdicts, True)
+        ), len(calibrated))
+    reviewed = [f for e in plausible for f in introduced_high(e) if f.get("finding_id") in (verdicts or {})]
+    real = [f for f in reviewed if verdicts[f["finding_id"]] == "real"]
+    return {
+        "compiled_patches": len(compiled),
+        "plausible_patches": len(plausible),
+        "compiled_with_new_issue_rate": share(compiled),
+        "plausible_with_new_issue_rate": share(plausible),
+        "plausible_with_confirmed_issue_rate": share(plausible, True) if have_review else None,
+        "new_findings_in_plausible": sum(len(introduced_high(e)) for e in plausible),
+        "reviewed_findings": len(reviewed),
+        "review_precision": _rate(len(real), len(reviewed)) if have_review else None,
+        "secure_and_functional_confirmed_rate": secure_confirmed,
+    }
+
+
+def introduced_cwe_counts(evaluations: Iterable[Dict[str, Any]],
+                          verdicts: Optional[Dict[str, str]] = None,
+                          confirmed_only: bool = False) -> Dict[str, int]:
+    """Count introduced high findings by CWE (tool/rule when no CWE) among compiled patches."""
+    counts: Dict[str, int] = defaultdict(int)
+    for e in evaluations:
+        if not (e.get("case_calibrated") and e.get("compiled") and e.get("changed")):
+            continue
+        for f in introduced_high(e, verdicts, confirmed_only):
+            counts[f.get("cwe") or f"{f.get('tool')}:{f.get('rule')}"] += 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+# --------------------------------------------------------------------------- #
+# Significance testing between models
+# --------------------------------------------------------------------------- #
+
+def mcnemar_exact(b: int, c: int) -> float:
+    """Two-sided exact McNemar p-value from discordant counts b and c."""
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(comb(n, i) for i in range(k + 1)) / 2 ** n
+    return min(1.0, 2 * tail)
+
+
+def holm(pvalues: List[float]) -> List[float]:
+    """Holm-Bonferroni adjusted p-values (same order as input)."""
+    m = len(pvalues)
+    order = sorted(range(m), key=lambda i: pvalues[i])
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, i in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * pvalues[i]))
+        adjusted[i] = running
+    return adjusted
+
+
+def pairwise_mcnemar(outcomes: Dict[str, Dict[Any, bool]]) -> List[Dict[str, Any]]:
+    """Compare every pair of models on the units (e.g. case+sample) both have results for.
+
+    ``outcomes``: model -> {unit: bool}. Returns rows with discordant counts,
+    raw and Holm-adjusted p-values.
+    """
+    models = sorted(outcomes)
+    rows = []
+    for i, a in enumerate(models):
+        for b_name in models[i + 1:]:
+            shared = set(outcomes[a]) & set(outcomes[b_name])
+            only_a = sum(1 for u in shared if outcomes[a][u] and not outcomes[b_name][u])
+            only_b = sum(1 for u in shared if outcomes[b_name][u] and not outcomes[a][u])
+            rows.append({
+                "model_a": a, "model_b": b_name, "paired_units": len(shared),
+                "a_success": sum(1 for u in shared if outcomes[a][u]),
+                "b_success": sum(1 for u in shared if outcomes[b_name][u]),
+                "only_a": only_a, "only_b": only_b,
+                "p_value": round(mcnemar_exact(only_a, only_b), 4),
+            })
+    for row, adj in zip(rows, holm([r["p_value"] for r in rows])):
+        row["p_holm"] = round(adj, 4)
+        row["significant_0.05"] = adj < 0.05
+    return rows
+
+
+def cohen_kappa(pairs: List[Tuple[str, str]]) -> Optional[float]:
+    """Cohen's kappa for two raters over categorical labels."""
+    pairs = [(a, b) for a, b in pairs if a and b]
+    n = len(pairs)
+    if n == 0:
+        return None
+    labels = sorted({x for p in pairs for x in p})
+    observed = sum(1 for a, b in pairs if a == b) / n
+    expected = sum((sum(1 for a, _ in pairs if a == lab) / n) * (sum(1 for _, b in pairs if b == lab) / n)
+                   for lab in labels)
+    if expected == 1.0:
+        return 1.0
+    return round((observed - expected) / (1 - expected), 4)
+
+
+def assign_finding_ids(evaluation: Dict[str, Any]) -> Dict[str, Any]:
+    """Give each introduced finding a stable id (used to attach manual review verdicts)."""
+    import hashlib
+
+    for f in (evaluation.get("static") or {}).get("introduced", []):
+        if not f.get("finding_id"):
+            raw = "|".join(str(x) for x in (evaluation.get("key"), f.get("file_name"), f.get("tool"),
+                                            f.get("rule"), f.get("line"), f.get("message")))
+            f["finding_id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return evaluation

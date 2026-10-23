@@ -29,7 +29,8 @@ Vul4C case ──► region extraction ──► prompts (identical for all mode
 | `pipeline/task_prompts.py` | Detection and repair prompts. |
 | `pipeline/vul4c_runner.py` | Docker sandbox driving the `vul4c` CLI, with calibration. |
 | `pipeline/static_analysis.py` | Differential cppcheck and flawfinder analysis. |
-| `pipeline/metrics.py` | Detection and repair metrics. |
+| `pipeline/metrics.py` | Detection and repair metrics, side-effect metrics, McNemar tests, Cohen's kappa. |
+| `pipeline/review.py`, `scripts/review_findings.py` | Manual review of introduced findings (export a blinded sheet, import verdicts). |
 | `config/experiment.json` | Models, cases, and settings. |
 | `scripts/check_eval_environment.sh` | Pre-flight check, plus an optional one-case sandbox smoke test. |
 
@@ -57,6 +58,35 @@ The `vul4c` source (`Vul4C_Src/vul4c_tools.py`) shows three things that matter:
 The pipeline therefore writes each patched file directly into `source/<path>`, byte for byte, when the checked-out file matches the benchmark's OLD file (checked by sha256). Otherwise it applies the patch as a unified diff with GNU `patch`. Each variant is restored from a pristine backup to the same absolute path, because autotools records absolute paths. Indexed pairs such as `sfconvert.c_OLD-1` / `_OLD-2` are successive patches to one file, so they are merged: first OLD to last NEW.
 
 `tests_preserved` compares the candidate's test summary with the human fix's summary. It is true when the candidate passes at least as many tests and has no more failures or errors. If no summary is printed, the result is unknown.
+
+## Security side effects and manual review
+
+The research question "does fixing one vulnerability introduce another?" is answered in the report section **Security side effects of repairs**:
+
+- `plausible_with_new_issue_rate`: of the patches that compile and block the exploit, the share that introduce at least one new high-severity static-analysis finding. This is the headline number. Its denominator is working patches only.
+- `compiled_with_new_issue_rate`: the same rate, over all patches that compile.
+- `introduced_issues_by_cwe.csv`: which kinds of issues (by CWE) each model introduces.
+
+Static analysers report false alarms, so confirm the findings by hand before claiming them:
+
+```bash
+python3 scripts/review_findings.py export --config config/experiment.json
+#  -> results/experiments/<name>/review/review_sheet.csv   (one row per finding)
+#  -> results/experiments/<name>/review/review_packet.html (finding, code context, full patch)
+```
+
+Model names are replaced by codes (M1, M2, ...) and rows are shuffled, so reviewers don't know which model wrote each patch. The key is in `review/model_key.json`; don't share it with reviewers. Two people fill `reviewer_1` and `reviewer_2` independently with `real`, `false_alarm` or `unsure`, then settle disagreements in `final`. Re-exporting after a new run keeps the verdicts already entered.
+
+```bash
+python3 scripts/review_findings.py import --config config/experiment.json
+python3 pipeline/run_experiment.py --config config/experiment.json --stage report
+```
+
+The report then adds `plausible_with_confirmed_issue_rate`, `secure_and_functional_confirmed_rate`, `review_precision` (the share of tool findings that were real), and Cohen's kappa between the reviewers. Report all of these in the paper. By default the export covers plausible patches only; `--include compiled` or `--include all` widens it.
+
+## Significance testing
+
+`significance.csv` and the report compare every pair of real models on the same calibrated cases, using a paired exact McNemar test with Holm correction for multiple comparisons. Two outcomes are tested: `secure_and_functional` and `exploit_blocked`. Sanity models are excluded. With few cases, most differences will not be significant; report that honestly.
 
 ## Setup (once, on the GPU machine)
 
@@ -99,7 +129,8 @@ If the `vul4c` command is missing inside the image, mount the SoK repo and insta
 - `generations.jsonl`: every prompt result. Each record has the raw output, parse status, patch, and token counts.
 - `calibration.jsonl`: per-case sandbox calibration, with log tails.
 - `evaluations.jsonl`: per-candidate results for apply, compile, exploit, tests, and static findings.
-- `report.md`, `detection_summary.csv`, `repair_summary.csv`, `repair_by_cwe_family.csv`, `summary.json`.
+- `report.md`, `detection_summary.csv`, `repair_summary.csv`, `repair_by_cwe_family.csv`, `repair_side_effects.csv`, `introduced_issues_by_cwe.csv`, `significance.csv`, `summary.json`.
+- `review/`: `review_sheet.csv`, `review_packet.html`, `model_key.json`, and `verdicts.json` after import.
 
 ## Known limitations
 
@@ -108,3 +139,4 @@ If the `vul4c` command is missing inside the image, mount the SoK repo and insta
 - For 60 files the dataset gives no repository path (`Vul4C.json` records one file per case), so the path is looked up inside the container by file name. If a name is ambiguous, the case shows up as an apply failure in calibration.
 - The CWE ground truth is the benchmark's label (for example, CWE-20 for a heap overflow). Report the `cwe_family` score alongside `cwe_exact`.
 - Static analysis runs on single files without the project's build context, so it is a differential signal, not a full audit.
+- New vulnerabilities are detected dynamically only if the case's own proof-of-concept triggers them. The sandbox runs one exploit per case, so a new memory error elsewhere in a patch is caught only by static analysis. Confirm such findings manually, as described above.
