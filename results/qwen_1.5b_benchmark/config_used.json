@@ -1,0 +1,138 @@
+{
+  "experiment_name": "benchmark_qwen1.5b_all",
+  "output_dir": "results/experiments",
+  "benchmark_root": "C:/Users/Lalit/OneDrive/Desktop/SoK/Vul4C-Benchmark",
+  "cases": [],
+  "max_cases": null,
+  "tasks": [
+    "detection",
+    "repair"
+  ],
+  "samples_per_case": 1,
+  "temperature": 0.0,
+  "seed": 42,
+  "pass_at_k": [
+    1
+  ],
+  "detection": {
+    "max_output_tokens": 512,
+    "use_json_prefill": true
+  },
+  "repair": {
+    "max_output_tokens": 4096,
+    "hints": {
+      "cwe": true,
+      "sanitizer_report": false
+    }
+  },
+  "context": {
+    "max_region_lines": 300,
+    "window_lines": 30,
+    "max_total_region_lines": 600
+  },
+  "static_analysis": {
+    "enabled": true,
+    "tools": [
+      "cppcheck",
+      "flawfinder"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "evaluate_uncalibrated": false,
+    "image": "vul4c/vul4c:4.0",
+    "setup_commands": [],
+    "mounts": [],
+    "disable_network_after_checkout": true,
+    "cpus": "2",
+    "memory": "6g",
+    "run_tests": true,
+    "timeouts": {
+      "checkout": 1800,
+      "compile": 1800,
+      "reproduce": 300,
+      "test": 3600
+    }
+  },
+  "models": [
+    {
+      "name": "oracle",
+      "provider": "oracle",
+      "enabled": true
+    },
+    {
+      "name": "identity",
+      "provider": "identity",
+      "enabled": true
+    },
+    {
+      "name": "qwen2.5-coder-1.5b",
+      "provider": "hf_local",
+      "enabled": false,
+      "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+      "torch_dtype": "float16",
+      "max_context_tokens": 32768
+    },
+    {
+      "name": "qwen2.5-coder-3b",
+      "provider": "hf_local",
+      "enabled": false,
+      "model": "Qwen/Qwen2.5-Coder-3B-Instruct",
+      "torch_dtype": "float16",
+      "max_context_tokens": 32768
+    },
+    {
+      "name": "qwen2.5-coder-7b-4bit",
+      "provider": "hf_local",
+      "enabled": false,
+      "model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "load_in_4bit": true,
+      "max_context_tokens": 32768
+    },
+    {
+      "name": "deepseek-coder-1.3b",
+      "provider": "hf_local",
+      "enabled": false,
+      "model": "deepseek-ai/deepseek-coder-1.3b-instruct",
+      "torch_dtype": "float16",
+      "max_context_tokens": 16384
+    },
+    {
+      "name": "ollama-qwen-1.5b",
+      "provider": "openai_compatible",
+      "enabled": true,
+      "base_url": "http://localhost:11434/v1",
+      "model": "qwen2.5-coder:1.5b"
+    },
+    {
+      "name": "claude-sonnet",
+      "provider": "anthropic",
+      "enabled": false,
+      "model": "claude-sonnet-5-5",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    {
+      "name": "openai-model",
+      "provider": "openai",
+      "enabled": false,
+      "model": "SET-AN-OPENAI-MODEL-ID",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    {
+      "name": "gemini-model",
+      "provider": "gemini",
+      "enabled": false,
+      "model": "SET-A-GEMINI-MODEL-ID",
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    {
+      "name": "ollama-qwen-7b",
+      "provider": "openai_compatible",
+      "enabled": true,
+      "base_url": "http://localhost:11434/v1",
+      "model": "qwen2.5-coder:7b",
+      "require_api_key": false
+    }
+  ],
+  "vul4c_dataset_json": null
+}
